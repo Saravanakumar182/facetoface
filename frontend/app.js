@@ -169,6 +169,10 @@ function updateStatus(message) {
     }
 }
 
+function startRoom(){
+    sendMessage("start_room",null,null);
+} 
+
 // Initialize WebSocket connection
 connect();
 
