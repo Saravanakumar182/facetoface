@@ -1,6 +1,5 @@
 package com.virtual.backend.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.util.List;
