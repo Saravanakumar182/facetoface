@@ -44,21 +44,19 @@ public class SignalHandler extends TextWebSocketHandler {
                 data,
                 new TypeReference<List<SignalMessage>>() {}
         );
-        for(SignalMessage signal : signals){
-            sendSignal(objectMapper.writeValueAsString(signal));
-        }
+        for(SignalMessage signal : signals)
+            sessions.get(signal.getToId())
+                    .sendMessage(new TextMessage(objectMapper.writeValueAsString(signal)));
+
+
 
     }
 
     private void getRoom(@NonNull WebSocketSession session, String roomId) throws IOException {
         List<String> mems = new ArrayList<>();
-        for(WebSocketSession ses : rooms.get(roomId)){
-            mems.add(ses.getId());
-        }
-
+        for(WebSocketSession ses : rooms.get(roomId)) mems.add(ses.getId());
         RoomMemResponse resp = new RoomMemResponse();
         resp.setMems(mems);
-
         session.sendMessage(new TextMessage(objectMapper.writeValueAsString(resp)));
     }
 
@@ -69,6 +67,7 @@ public class SignalHandler extends TextWebSocketHandler {
         CreateRoomResponse resp = new CreateRoomResponse("roomId",roomId);
         session.sendMessage(new TextMessage(objectMapper.writeValueAsString(resp)));
     }
+
     private static void  sendSignal(String payload) throws IOException {
         SignalMessage signal = objectMapper.readValue(payload,SignalMessage.class);
 

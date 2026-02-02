@@ -1,7 +1,9 @@
 let ws = null;
-let pc = null;
 let localStream = null;
 let userId = null;
+let roomId = null;
+let roomMembers = [];
+let peerConnections = {}; // Store PC for each peer
 
 const ICE_SERVERS = {
     iceServers: [
@@ -36,24 +38,23 @@ function onConnected() {
     console.log("Ready to exchange offers and answers");
 }
 
-async function initializePeerConnection() {
-    pc = new RTCPeerConnection(ICE_SERVERS);
+async function initializePeerConnection(peerId) {
+    const pc = new RTCPeerConnection(ICE_SERVERS);
 
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            console.log("📤 Sending ICE candidate:", event.candidate);
-            const toId = document.getElementById("remoteUserId").value || "remote";
-            sendMessage("ice", event.candidate, toId);
+            console.log("📤 Sending ICE candidate to:", peerId);
+            sendMessage("signal", "ice", event.candidate, peerId);
         } else {
-            console.log("✅ ICE candidate gathering completed");
+            console.log("✅ ICE candidate gathering completed for:", peerId);
         }
     };
 
     // Handle remote track
     pc.ontrack = (event) => {
-        console.log("📥 Remote track received:", event.track.kind);
-        const remoteVideo = document.getElementById("remoteVideo");
+        console.log("📥 Remote track received from:", peerId);
+        const remoteVideo = document.getElementById(`remoteVideo-${peerId}`);
         if (remoteVideo && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
         }
@@ -61,11 +62,14 @@ async function initializePeerConnection() {
 
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
-        console.log("Connection state:", pc.connectionState);
+        console.log(`Connection state with ${peerId}:`, pc.connectionState);
+        if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+            closePeerConnection(peerId);
+        }
     };
 
     pc.oniceconnectionstatechange = () => {
-        console.log("ICE connection state:", pc.iceConnectionState);
+        console.log(`ICE connection state with ${peerId}:`, pc.iceConnectionState);
     };
 
     // Add local stream tracks
@@ -74,62 +78,133 @@ async function initializePeerConnection() {
             pc.addTrack(track, localStream);
         });
     }
+
+    peerConnections[peerId] = pc;
+    return pc;
 }
 
-async function createAndSendOffer() {
-    const toId = prompt("Enter recipient user ID:");
-    if (!toId) {
-        console.log("Offer creation cancelled");
+async function createOfferForPeer(peerId) {
+    if (!peerConnections[peerId]) {
+        await initializePeerConnection(peerId);
+    }
+    const pc = peerConnections[peerId];
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    console.log("📤 Sending offer to:", peerId);
+    sendMessage("signal", "offer", offer, peerId);
+}
+
+async function handleOfferMessage(message) {
+    console.log("📩 Offer received from:", message.fromId);
+    const peerId = message.fromId;
+    
+    if (!peerConnections[peerId]) {
+        await initializePeerConnection(peerId);
+    }
+    
+    const pc = peerConnections[peerId];
+    await pc.setRemoteDescription(new RTCSessionDescription(message.data));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    console.log("📤 Sending answer to:", peerId);
+    sendMessage("signal", "answer", answer, peerId);
+}
+
+async function handleAnswerMessage(message) {
+    console.log("📩 Answer received from:", message.fromId);
+    const peerId = message.fromId;
+    
+    if (peerConnections[peerId]) {
+        const pc = peerConnections[peerId];
+        await pc.setRemoteDescription(new RTCSessionDescription(message.data));
+    }
+}
+
+async function handleIceMessage(message) {
+    console.log("📩 ICE candidate received from:", message.fromId);
+    const peerId = message.fromId;
+    
+    if (peerConnections[peerId]) {
+        try {
+            await peerConnections[peerId].addIceCandidate(new RTCIceCandidate(message.data));
+        } catch (e) {
+            console.error(`Error adding ICE candidate for ${peerId}:`, e);
+        }
+    }
+}
+
+function createRemoteVideoElement(peerId) {
+    const container = document.getElementById("remoteVideosContainer");
+    
+    // Check if element already exists
+    if (document.getElementById(`videoBox-${peerId}`)) {
         return;
     }
     
-    document.getElementById("remoteUserId").value = toId;
-    await initializePeerConnection();
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log("📤 Sending offer to:", toId);
-    sendMessage("offer", offer, toId);
+    // Create video box wrapper
+    const videoBox = document.createElement("div");
+    videoBox.className = "video-box";
+    videoBox.id = `videoBox-${peerId}`;
+    
+    // Create label
+    const label = document.createElement("div");
+    label.className = "video-label";
+    label.textContent = `Peer: ${peerId}`;
+    
+    // Create video element
+    const video = document.createElement("video");
+    video.id = `remoteVideo-${peerId}`;
+    video.autoplay = true;
+    video.playsinline = true;
+    
+    // Append to structure
+    videoBox.appendChild(label);
+    videoBox.appendChild(video);
+    container.appendChild(videoBox);
+    
+    console.log("📹 Created video element for peer:", peerId);
 }
 
-async function handleMessage(message) {
-    try {
-        if (message.type === "offer") {
-            console.log("📩 Offer received from:", message.fromId);
-            document.getElementById("remoteUserId").value = message.fromId;
-            if (!pc) {
-                await initializePeerConnection();
-            }
-            await pc.setRemoteDescription(new RTCSessionDescription(message.data));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            console.log("📤 Sending answer to:", message.fromId);
-            sendMessage("answer", answer, message.fromId);
-
-        } else if (message.type === "answer") {
-            console.log("📩 Answer received");
-            await pc.setRemoteDescription(new RTCSessionDescription(message.data));
-        } else if (message.type === "ice") {
-            console.log("📩 ICE candidate received");
-            try {
-                await pc.addIceCandidate(new RTCIceCandidate(message.data));
-            } catch (e) {
-                console.error("Error adding ICE candidate:", e);
-            }
-        } else if(message.type == "id"){
-            userId = message.data;
-            document.getElementById("userId").value = userId;
-            console.log("📩 User ID received:", userId);
-            updateStatus("Connected as: " + userId);
-        }
-    } catch (error) {
-        console.error("Error handling message:", error);
+function removeRemoteVideoElement(peerId) {
+    const videoBox = document.getElementById(`videoBox-${peerId}`);
+    if (videoBox) {
+        videoBox.remove();
+        console.log("🗑️ Removed video element for peer:", peerId);
     }
 }
 
-function sendMessage(type, data,toId) {
+function closePeerConnection(peerId) {
+    if (peerConnections[peerId]) {
+        peerConnections[peerId].close();
+        delete peerConnections[peerId];
+        console.log("🔌 Closed peer connection with:", peerId);
+        
+        removeRemoteVideoElement(peerId);
+    }
+}
+
+function handleRoomMembersMessage(message) {
+    roomMembers = message.mems;
+    console.log("📩 Room members received:", roomMembers);
+    
+    // Create peer connections for new members
+    roomMembers.forEach(memberId => {
+        if (memberId !== userId && !peerConnections[memberId]) {
+            createRemoteVideoElement(memberId);
+            createOfferForPeer(memberId);
+        }
+    });
+}
+
+function sendMessage(msgType,rtc_type, data, toId) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         let fromId = userId;
-        ws.send(JSON.stringify({ type, data, fromId, toId }));
+        if(msgType==="get_room_details"){
+            ws.send(JSON.stringify({ type: msgType, data: {roomId} }));
+        }else{
+            ws.send(JSON.stringify({ type: msgType, data: { type: rtc_type, data, fromId, toId } }));
+        }
+        
     }
 }
 
@@ -150,28 +225,12 @@ function sendMessage(type, data,toId) {
 })();
 
 function hangup() {
-    if (pc) {
-        pc.close();
-        pc = null;
-        console.log("📞 Call ended");
-    }
-    
-    const remoteVideo = document.getElementById("remoteVideo");
-    if (remoteVideo) {
-        remoteVideo.srcObject = null;
-    }
+    // Close all peer connections
+    Object.keys(peerConnections).forEach(peerId => {
+        closePeerConnection(peerId);
+    });
+    console.log("📞 All calls ended");
 }
-
-function updateStatus(message) {
-    const statusEl = document.getElementById("status");
-    if (statusEl) {
-        statusEl.textContent = message;
-    }
-}
-
-function startRoom(){
-    sendMessage("start_room",null,null);
-} 
 
 // Initialize WebSocket connection
 connect();
