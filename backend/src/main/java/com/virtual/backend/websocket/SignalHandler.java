@@ -10,7 +10,6 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
@@ -22,17 +21,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SignalHandler extends TextWebSocketHandler {
 
     private final static Map<String,WebSocketSession> sessions  = new ConcurrentHashMap<>();
-
     private static final Map<String, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();
-
     private final static ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public void handleTextMessage(@NonNull WebSocketSession session, @NonNull TextMessage msg) throws IOException {
         String payload = msg.getPayload();
-
         InitRequest signal = objectMapper.readValue(payload, InitRequest.class);
-
         switch (signal.getType()) {
             case "create_room" -> createRoom(session);
             case "get_room" -> getRoom(session, signal.getData());
@@ -42,14 +37,10 @@ public class SignalHandler extends TextWebSocketHandler {
         }
     }
 
-    private void leaveRoom(WebSocketSession session,String roomId) throws IOException {
-        
+    private void leaveRoom(@NonNull WebSocketSession session,String roomId) throws IOException {
         rooms.get(roomId).remove(session);
-
         for(WebSocketSession ses : rooms.get(roomId)){
-            
             Response resp  = new Response("mem_leave", ses.getId());
-
             ses.sendMessage(new TextMessage(objectMapper.writeValueAsString(resp)));
         }
     }
@@ -62,12 +53,14 @@ public class SignalHandler extends TextWebSocketHandler {
         for(SignalMessage signal : signals)
             sessions.get(signal.getToId())
                     .sendMessage(new TextMessage(objectMapper.writeValueAsString(signal)));
-
     }
 
     private void getRoom(@NonNull WebSocketSession session, String roomId) throws IOException {
         List<String> mems = new ArrayList<>();
-        for(WebSocketSession ses : rooms.get(roomId)) mems.add(ses.getId());
+        for(WebSocketSession ses : rooms.get(roomId)) {
+            String id = ses.getId();
+            if(!id.equals(session.getId())) mems.add(id);
+        }
         RoomMemResponse resp = new RoomMemResponse();
         resp.setMems(mems);
         session.sendMessage(new TextMessage(objectMapper.writeValueAsString(resp)));

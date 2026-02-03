@@ -39,6 +39,7 @@ function onConnected() {
 }
 
 async function initializePeerConnection(peerId) {
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
     // Handle ICE candidates
@@ -101,7 +102,7 @@ async function handleOfferMessage(message) {
     if (!peerConnections[peerId]) {
         await initializePeerConnection(peerId);
     }
-    
+    createRemoteVideoElement(peerId);
     const pc = peerConnections[peerId];
     await pc.setRemoteDescription(new RTCSessionDescription(message.data));
     const answer = await pc.createAnswer();
@@ -126,7 +127,8 @@ async function handleIceMessage(message) {
     
     if (peerConnections[peerId]) {
         try {
-            await peerConnections[peerId].addIceCandidate(new RTCIceCandidate(message.data));
+            await peerConnections[peerId]
+                .addIceCandidate(new RTCIceCandidate(message.data));
         } catch (e) {
             console.error(`Error adding ICE candidate for ${peerId}:`, e);
         }
@@ -134,35 +136,32 @@ async function handleIceMessage(message) {
 }
 
 function createRemoteVideoElement(peerId) {
+
     const container = document.getElementById("remoteVideosContainer");
     
-    // Check if element already exists
     if (document.getElementById(`videoBox-${peerId}`)) {
         return;
     }
     
-    // Create video box wrapper
     const videoBox = document.createElement("div");
     videoBox.className = "video-box";
     videoBox.id = `videoBox-${peerId}`;
     
-    // Create label
     const label = document.createElement("div");
     label.className = "video-label";
     label.textContent = `Peer: ${peerId}`;
     
-    // Create video element
     const video = document.createElement("video");
     video.id = `remoteVideo-${peerId}`;
     video.autoplay = true;
     video.playsinline = true;
     
-    // Append to structure
     videoBox.appendChild(label);
     videoBox.appendChild(video);
     container.appendChild(videoBox);
     
     console.log("📹 Created video element for peer:", peerId);
+    
 }
 
 function removeRemoteVideoElement(peerId) {
