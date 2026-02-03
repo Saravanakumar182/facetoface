@@ -36,11 +36,13 @@ const connect = () => {
 
 function onConnected() {
     console.log("Ready to exchange offers and answers");
-}
+}      
 
 async function initializePeerConnection(peerId) {
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
+    // Ensure a DOM element exists for this peer so ontrack can attach streams
+    createRemoteVideoElement(peerId);
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
         if (event.candidate) {
@@ -54,9 +56,20 @@ async function initializePeerConnection(peerId) {
     // Handle remote track
     pc.ontrack = (event) => {
         console.log("📥 Remote track received from:", peerId);
-        const remoteVideo = document.getElementById(`remoteVideo-${peerId}`);
+        let remoteVideo = document.getElementById(`remoteVideo-${peerId}`);
+        if (!remoteVideo) {
+            // fallback: create element if it wasn't created earlier
+            createRemoteVideoElement(peerId);
+            remoteVideo = document.getElementById(`remoteVideo-${peerId}`);
+        }
+
         if (remoteVideo && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
+            // attempt to play the video (some browsers require explicit play)
+            const playPromise = remoteVideo.play && remoteVideo.play();
+            if (playPromise && typeof playPromise.then === 'function') {
+                playPromise.catch(e => console.warn('Could not autoplay remote video:', e));
+            }
         }
     };
 
@@ -210,7 +223,17 @@ function handleMessage(message) {
             
         case "signal":
             // WebRTC signal (offer, answer, ice)
-            handleSignalMessage(message.data);
+            // message.data may be a JSON-stringified payload depending on sender
+            let signalPayload = message.data;
+            if (typeof signalPayload === 'string') {
+                try {
+                    signalPayload = JSON.parse(signalPayload);
+                } catch (e) {
+                    console.error('❌ Failed to parse signal payload', e, signalPayload);
+                    return;
+                }
+            }
+            handleSignalMessage(signalPayload);
             break;
 
         case "mem_leave":
@@ -219,6 +242,24 @@ function handleMessage(message) {
             
         default:
             console.log("⚠️ Unknown message type:", message.type);
+    }
+}
+
+function handleSignalMessage(signalData) {
+    const { type, data, fromId, toId } = signalData;
+    
+    switch (type) {
+        case "offer":
+            handleOfferMessage({ fromId, data });
+            break;
+        case "answer":
+            handleAnswerMessage({ fromId, data });
+            break;
+        case "ice":
+            handleIceMessage({ fromId, data });
+            break;
+        default:
+            console.log("⚠️ Unknown signal type:", type);
     }
 }
 
@@ -342,25 +383,10 @@ function leaveRoom() {
     roomMembers = [];
     // Update UI
     hideRoomUI();
+    sendMessage("leave_room");
 }
 
-function handleSignalMessage(signalData) {
-    const { type, data, fromId, toId } = signalData;
-    
-    switch (type) {
-        case "offer":
-            handleOfferMessage({ fromId, data });
-            break;
-        case "answer":
-            handleAnswerMessage({ fromId, data });
-            break;
-        case "ice":
-            handleIceMessage({ fromId, data });
-            break;
-        default:
-            console.log("⚠️ Unknown signal type:", type);
-    }
-}
+
 
 function sendMessage(msgType, rtcType, data, toId) {
     if (ws && ws.readyState === WebSocket.OPEN) {
